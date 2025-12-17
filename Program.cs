@@ -11,8 +11,11 @@ namespace NoSeProgramarJajajLoL
             // 1. Agregar servicios al contenedor
             builder.Services.AddControllers();
 
-            // Registramos tu servicio y el HttpClient
+            // Registramos servicio y el HttpClient
             builder.Services.AddHttpClient<PokeServices>();
+
+            // ---> AGREGAR ESTA LÍNEA PARA ACTIVAR LA CACHÉ <---
+            builder.Services.AddMemoryCache();
 
             builder.Services.AddEndpointsApiExplorer();
             builder.Services.AddSwaggerGen();
@@ -24,7 +27,7 @@ namespace NoSeProgramarJajajLoL
                     policy =>
                     {
                         // Aquí permitimos que el puerto de Vite/React (ej. 5173 o 3000) entre a la API
-                        policy.WithOrigins("http://localhost:5173", "http://localhost:3000")
+                        policy.WithOrigins("http://localhost:5173", "http://localhost:3000", "http://localhost:5174")
                               .AllowAnyHeader()
                               .AllowAnyMethod();
                     });
@@ -39,7 +42,7 @@ namespace NoSeProgramarJajajLoL
                 app.UseSwaggerUI();
             }
 
-            app.UseHttpsRedirection();
+          
 
             // ?? ACTIVAR CORS (Debe ir antes de UseAuthorization)
             app.UseCors("AllowReactApp");
@@ -47,6 +50,8 @@ namespace NoSeProgramarJajajLoL
             app.UseAuthorization();
 
             app.MapControllers();
+
+            app.UseCors("AllowReactApp");
 
             app.Run();
         }

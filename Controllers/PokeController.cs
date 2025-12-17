@@ -1,48 +1,40 @@
-﻿using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Mvc;
 using NoSeProgramarJajajLoL.models;
 using NoSeProgramarJajajLoL.Services;
 
 namespace NoSeProgramarJajajLoL.Controllers
 {
-    [Route("api/[controller]")]
     [ApiController]
+    [Route("api/poke")] // Esto define la URL base: localhost:xxxx/api/poke
     public class PokeController : ControllerBase
     {
         private readonly PokeServices _pokeServices;
+
         public PokeController(PokeServices pokeServices)
         {
             _pokeServices = pokeServices;
         }
 
+        // GET: api/poke?limit=20
         [HttpGet]
-        public async Task<IActionResult> GetAll([FromQuery] int limit = 20)
+        public async Task<ActionResult<List<Pokemon>>> GetAll([FromQuery] int limit = 20)
         {
-            try
-            {
-                var pokemons = await _pokeServices.GetPokemonsAsync(limit);
-                return Ok(pokemons);
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
-            }
+            var result = await _pokeServices.GetPokemonsAsync(limit);
+            return Ok(result);
         }
 
-        [HttpGet("{id}")]
-        public async Task<IActionResult> GetById(int id)
+        // GET: api/poke/pikachu  O  api/poke/25
+        [HttpGet("{term}")]
+        public async Task<ActionResult<Pokemon>> GetByTerm(string term)
         {
-            try
+            var pokemon = await _pokeServices.GetPokemonByTermAsync(term);
+
+            if (pokemon == null)
             {
-                var pokemon = await _pokeServices.GetPokemonByIdAsync(id);
-                if (pokemon == null)
-                    return NotFound($"Pokemon with id {id} not found");
-                return Ok(pokemon);
+                return NotFound(new { message = $"No se encontró el pokemon: {term}" });
             }
-            catch (Exception ex)
-            {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
-            }
+
+            return Ok(pokemon);
         }
     }
 }

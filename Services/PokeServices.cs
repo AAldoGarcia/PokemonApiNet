@@ -1,6 +1,6 @@
-﻿using System.Net.Http;
-using System.Net.Http.Json;
+﻿using System.Net.Http.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Caching.Memory; // <-- IMPORTANTE
 using NoSeProgramarJajajLoL.models;
 
 namespace NoSeProgramarJajajLoL.Services
@@ -8,84 +8,98 @@ namespace NoSeProgramarJajajLoL.Services
     public class PokeServices
     {
         private readonly HttpClient _httpClient;
+        private readonly IMemoryCache _cache; // <-- Inyectamos la caché
         private const string BaseUrl = "https://pokeapi.co/api/v2/";
 
-        public PokeServices(HttpClient httpClient)
+        // Constructor actualizado
+        public PokeServices(HttpClient httpClient, IMemoryCache cache)
         {
             _httpClient = httpClient;
+            _cache = cache;
         }
 
+        // 1. OBTENER LISTA (AHORA CON CACHÉ)
         public async Task<List<Pokemon>> GetPokemonsAsync(int limit = 20)
         {
-            var response = await _httpClient.GetFromJsonAsync<PokemonListResponse>($"{BaseUrl}pokemon?limit={limit}");
+            // Creamos una clave única. Ejemplo: "pokemons_list_1300"
+            string cacheKey = $"pokemons_list_{limit}";
 
-            if (response?.Results == null)
-                return new List<Pokemon>();
-
-            var pokemons = new List<Pokemon>();
-
-            // Procesar en paralelo para mejor rendimiento
-            var tasks = response.Results.Select(async item =>
+            // PREGUNTAMOS: ¿Existe esta lista en caché?
+            if (!_cache.TryGetValue(cacheKey, out List<Pokemon> cachedPokemons))
             {
-                var pokemonDetail = await GetPokemonDetailAsync(item.Url);
-                return pokemonDetail;
-            });
+                // SI NO EXISTE: Ejecutamos tu lógica original (lenta)
+                try
+                {
+                    // Aumentamos el Timeout del HttpClient por si acaso (para la primera carga)
+                    _httpClient.Timeout = TimeSpan.FromMinutes(5);
 
-            var results = await Task.WhenAll(tasks);
-            return results.Where(p => p != null).ToList()!;
+                    var response = await _httpClient.GetFromJsonAsync<PokemonListResponse>($"{BaseUrl}pokemon?limit={limit}");
+
+                    if (response?.Results == null) return new List<Pokemon>();
+
+                    // NOTA: Hacer 1300 peticiones de golpe puede ser detectado como ataque.
+                    // Lo dejamos así por ahora, pero ten en cuenta que la primera vez tardará.
+                    var tasks = response.Results.Select(item => GetPokemonByTermAsync(item.Name));
+                    var results = await Task.WhenAll(tasks);
+
+                    cachedPokemons = results.Where(p => p != null).ToList()!;
+
+                    // GUARDAMOS EN CACHÉ
+                    var cacheEntryOptions = new MemoryCacheEntryOptions()
+                        // Mantiene los datos en memoria por 1 hora
+                        .SetAbsoluteExpiration(TimeSpan.FromHours(1))
+                        // Si nadie los usa en 20 minutos, los borra para ahorrar RAM
+                        .SetSlidingExpiration(TimeSpan.FromMinutes(20));
+
+                    _cache.Set(cacheKey, cachedPokemons, cacheEntryOptions);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error obteniendo datos: {ex.Message}");
+                    return new List<Pokemon>();
+                }
+            }
+
+            // Devolvemos los datos (ya sea de la caché o recién descargados)
+            return cachedPokemons;
         }
 
-        private async Task<Pokemon?> GetPokemonDetailAsync(string url)
+        // 2. BUSCAR POR NOMBRE O ID (También podemos cachear búsquedas individuales)
+        public async Task<Pokemon?> GetPokemonByTermAsync(string term)
         {
-            try
-            {
-                var data = await _httpClient.GetFromJsonAsync<PokemonApiResponse>(url);
-                if (data == null) return null;
+            var cleanTerm = term.Trim().ToLower();
+            string cacheKey = $"pokemon_detail_{cleanTerm}";
 
-                return new Pokemon
+            if (!_cache.TryGetValue(cacheKey, out Pokemon? cachedPokemon))
+            {
+                try
                 {
-                    Id = data.Id,
-                    Name = data.Name,
-                    SpriteUrl = data.Sprites?.FrontDefault ?? "",
-                    Types = data.Types?.Select(t => t.Type.Name).ToList() ?? new List<string>(),
-                    Stats = data.Stats?.ToDictionary(
-                        s => s.Stat.Name,
-                        s => s.BaseStat
-                    ) ?? new Dictionary<string, int>()
-                };
-            }
-            catch (Exception ex)
-            {
-                // Log the error for debugging
-                Console.WriteLine($"Error getting pokemon detail: {ex.Message}");
-                return null;
-            }
-        }
+                    var data = await _httpClient.GetFromJsonAsync<PokemonApiResponse>($"{BaseUrl}pokemon/{cleanTerm}");
 
-        public async Task<Pokemon?> GetPokemonByIdAsync(int id)
-        {
-            try
-            {
-                var data = await _httpClient.GetFromJsonAsync<PokemonApiResponse>($"{BaseUrl}pokemon/{id}");
-                if (data == null) return null;
+                    if (data == null) return null;
 
-                return new Pokemon
+                    cachedPokemon = new Pokemon
+                    {
+                        Id = data.Id,
+                        Name = data.Name,
+                        SpriteUrl = data.Sprites?.FrontDefault ?? "",
+                        Types = data.Types?.Select(t => t.Type.Name).ToList() ?? new List<string>(),
+                        Stats = data.Stats?.ToDictionary(
+                            s => s.Stat.Name,
+                            s => s.BaseStat
+                        ) ?? new Dictionary<string, int>()
+                    };
+
+                    // Guardamos el pokemon individual en caché por 1 hora
+                    _cache.Set(cacheKey, cachedPokemon, TimeSpan.FromHours(1));
+                }
+                catch
                 {
-                    Id = data.Id,
-                    Name = data.Name,
-                    SpriteUrl = data.Sprites?.FrontDefault ?? "",
-                    Types = data.Types?.Select(t => t.Type.Name).ToList() ?? new List<string>(),
-                    Stats = data.Stats?.ToDictionary(
-                        s => s.Stat.Name,
-                        s => s.BaseStat
-                    ) ?? new Dictionary<string, int>()
-                };
+                    return null;
+                }
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error getting pokemon by id: {ex.Message}");
-                return null;
-            }
+
+            return cachedPokemon;
         }
     }
 
